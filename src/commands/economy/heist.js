@@ -3,7 +3,6 @@ const User = require('../../models/User');
 const Vault = require('../../models/Vault');
 const HeistAttempt = require('../../models/HeistAttempt');
 const THEME = require('../../utils/theme');
-const { generateHeistRiddle } = require('../../nexus/gemini');
 
 // In-memory state: channelId -> heistState
 const activeHeists = new Map();
