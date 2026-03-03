@@ -10,6 +10,38 @@ const activeHeists = new Map();
 const BASE_VAULT_AMOUNT = 250000;
 const HEIST_DURATION_MS = 2 * 60 * 1000; // 2 minutes
 
+const HEIST_RIDDLE_POOL = [
+    {
+        challenge: 'Neon rain hits the vault glass. Three cameras blink, one never does. Whisper the password hidden between static and moonlight.',
+        solution_keywords: ['static', 'moonlight', 'neon'],
+        success_story: 'Your crew slips through the firewall like ghosts of electricity. The vault exhales and the credits reroute cleanly into your wallets.',
+        failure_mockery: 'You argue about code names for so long the vault flags you as background noise. The door stays shut. The city laughs.'
+    },
+    {
+        challenge: 'The lock believes in only three gods: signal, mirror, and debt. Name one and watch the ledger twitch.',
+        solution_keywords: ['signal', 'mirror', 'debt'],
+        success_story: 'One keyword lands like a key in the right tumbler. The ledger flips, the lock panics, and your payout blooms across the grid.',
+        failure_mockery: 'You spam the channel with nonsense until even the bots get bored. The vault doesn’t even bother alarming.'
+    },
+    {
+        challenge: 'Chrome hands, cold voice, warm heartbeat. Corrupt one sensor and the biometric wall becomes a rumor.',
+        solution_keywords: ['chrome', 'voice', 'heartbeat'],
+        success_story: 'Telemetry lies perfectly. Sensors salute your forgery. The vault opens because it can no longer imagine saying no.',
+        failure_mockery: 'Your “forgery” reads like a bad fanfic. The biometric wall hard-denies you out of pure embarrassment.'
+    },
+    {
+        challenge: 'Four ghosts haunt the datacenter: glass, smoke, rust, and pure signal. Call one and the vault will flinch.',
+        solution_keywords: ['glass', 'smoke', 'signal', 'ghost'],
+        success_story: 'A single word triggers an old backdoor. The vault folds in on itself, and the payout slides away under a veil of static.',
+        failure_mockery: 'You trip every alarm except the right one. The vault tags your crew as “cute” and moves on.'
+    }
+];
+
+function pickHeistRiddle() {
+    const idx = Math.floor(Math.random() * HEIST_RIDDLE_POOL.length);
+    return HEIST_RIDDLE_POOL[idx];
+}
+
 function getJailedRoleId() {
     return process.env.JAILED_ROLE_ID || 'JAILED_ROLE_ID_HERE';
 }
@@ -563,7 +595,7 @@ module.exports = {
                 });
             }
 
-            // Show loading / decrypting animation while we wait for Gemini
+            // Show loading / decrypting animation while we generate the riddle
             const loadingEmbed = EmbedBuilder.from(interaction.message.embeds[0] || new EmbedBuilder())
                 .setColor(THEME.COLORS.ACCENT)
                 .setDescription(buildLoadingAnsiBlock());
@@ -574,7 +606,7 @@ module.exports = {
             });
 
             try {
-                const riddlePayload = await generateHeistRiddle();
+                const riddlePayload = pickHeistRiddle();
                 heistState.riddlePayload = riddlePayload;
                 heistState.startedAt = new Date();
                 heistState.expiresAt = new Date(Date.now() + HEIST_DURATION_MS);
