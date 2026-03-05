@@ -8,7 +8,9 @@ const { loadEvents } = require('./handlers/eventHandler');
 
 const client = new Client({
     intents: [
-        GatewayIntentBits.Guilds
+        GatewayIntentBits.Guilds,
+        GatewayIntentBits.GuildMessages,
+        GatewayIntentBits.MessageContent
     ],
     partials: [Partials.Channel, Partials.Message, Partials.Reaction]
 });
@@ -28,6 +30,9 @@ client.once('ready', () => {
         });
     } catch (_) { }
     console.log(`✅ [ELORA CASINO] Logged in as ${client.user.tag}`);
+    if (process.env.EVENT_DEBUG === '1') {
+        console.log(`ℹ️ [ELORA CASINO] Intents enabled: ${client.options.intents?.length || 0}`);
+    }
 });
 
 (async () => {

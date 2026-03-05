@@ -1,6 +1,12 @@
 module.exports = {
     name: 'interactionCreate',
     async execute(interaction, client) {
+        if (process.env.EVENT_DEBUG === '1') {
+            try {
+                console.log(`🧩 interactionCreate: type=${interaction?.type} chat=${interaction?.isChatInputCommand?.()} button=${interaction?.isButton?.()} name=${interaction?.commandName || interaction?.customId || 'n/a'}`);
+            } catch (_) { }
+        }
+
         const safeReply = async (payload) => {
             try {
                 if (interaction.deferred || interaction.replied) return await interaction.followUp(payload);

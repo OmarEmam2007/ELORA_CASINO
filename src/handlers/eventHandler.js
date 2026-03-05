@@ -6,10 +6,20 @@ async function loadEvents(client) {
     for (const folder of folders) {
         const files = fs.readdirSync(path.join(__dirname, `../events/${folder}`)).filter((file) => file.endsWith('.js'));
         for (const file of files) {
-            if (folder === 'client' && file !== 'interactionCreate.js') continue;
             if (folder !== 'client') continue;
-            if (file === 'messageCreate.js') continue;
-            const event = require(`../events/${folder}/${file}`);
+
+            let event;
+            try {
+                event = require(`../events/${folder}/${file}`);
+            } catch (e) {
+                console.error(`❌ Failed loading event module: events/${folder}/${file}`, e);
+                continue;
+            }
+
+            if (!event?.name || typeof event.execute !== 'function') {
+                console.warn(`⚠️ Skipping invalid event module: events/${folder}/${file}`);
+                continue;
+            }
             if (event.rest) {
                 if (event.once)
                     client.rest.once(event.name, (...args) => event.execute(...args, client));
@@ -20,6 +30,10 @@ async function loadEvents(client) {
                     client.once(event.name, (...args) => event.execute(...args, client));
                 else
                     client.on(event.name, (...args) => event.execute(...args, client));
+            }
+
+            if (process.env.EVENT_DEBUG === '1') {
+                console.log(`✅ Loaded event: ${event.name} (events/${folder}/${file})`);
             }
         }
     }

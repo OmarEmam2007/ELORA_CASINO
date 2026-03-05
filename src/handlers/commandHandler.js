@@ -73,10 +73,18 @@ async function loadCommands(client) {
         try {
             if (!client?.application) return;
 
+            if (!client.application?.id && typeof client.application.fetch === 'function') {
+                try {
+                    await client.application.fetch();
+                } catch (e) {
+                    console.warn('⚠️ Failed to fetch application data for slash registration:', e?.message || e);
+                }
+            }
+
             const guildId = process.env.GUILD_ID || client.config?.guildId;
 
             if (!guildId) {
-                console.log('ℹ️ Skipping slash command registration: missing GUILD_ID');
+                console.log('ℹ️ Skipping slash command registration: missing GUILD_ID (set env GUILD_ID or config.guildId)');
                 return;
             }
 
