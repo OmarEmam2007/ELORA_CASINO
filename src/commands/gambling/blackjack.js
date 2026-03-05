@@ -10,6 +10,29 @@ const HIGH_ROLLER_ROLE = '1467468390171021394';
 // Store active games: userId -> gameState
 const activeGames = new Map();
 
+// Best-effort snapshot store to recover from transient glitches/reloads
+// userId -> { gameState, savedAt }
+const gameSnapshots = new Map();
+
+function saveSnapshot(userId, gameState) {
+    try {
+        gameSnapshots.set(userId, { gameState: JSON.parse(JSON.stringify(gameState)), savedAt: Date.now() });
+    } catch (_) {
+        // ignore snapshot failures
+    }
+}
+
+function loadSnapshot(userId) {
+    const snap = gameSnapshots.get(userId);
+    if (!snap?.gameState) return null;
+    // 30 minutes TTL (in-memory)
+    if (Date.now() - (snap.savedAt || 0) > 30 * 60 * 1000) {
+        gameSnapshots.delete(userId);
+        return null;
+    }
+    return snap.gameState;
+}
+
 function getCardValue(card) {
     if (card === 'A') return 11;
     if (['J', 'Q', 'K'].includes(card)) return 10;
@@ -219,6 +242,26 @@ module.exports = {
         }
 
         const userId = message.author.id;
+
+        const sub = String(args?.[0] || '').toLowerCase();
+        if (sub === 'refresh' || sub === 'resume') {
+            const existing = activeGames.get(userId) || loadSnapshot(userId);
+            if (!existing) {
+                return message.reply({ embeds: [new EmbedBuilder().setColor(THEME.COLORS.ERROR).setDescription('❌ No active game to refresh. Start one with `elora blackjack <amount>`')] });
+            }
+
+            // Restore to activeGames if it was only a snapshot
+            if (!activeGames.has(userId)) {
+                activeGames.set(userId, existing);
+            }
+
+            const embed = createGameEmbed(existing, userId, message.author);
+            const buttons = createButtons(existing);
+            const sentMessage = await message.reply({ embeds: [embed], components: [buttons] });
+            existing.messageId = sentMessage.id;
+            saveSnapshot(userId, existing);
+            return;
+        }
         
         // Check if user has an active game
         if (activeGames.has(userId)) {
@@ -340,6 +383,7 @@ module.exports = {
 
         const sentMessage = await message.reply({ embeds: [embed], components: [buttons] });
         gameState.messageId = sentMessage.id;
+        saveSnapshot(userId, gameState);
 
         // Auto-cleanup after 5 minutes
         setTimeout(() => {
@@ -351,12 +395,28 @@ module.exports = {
 
     async handleButton(interaction) {
         const userId = interaction.user.id;
-        const gameState = activeGames.get(userId);
+        let gameState = activeGames.get(userId);
+
+        if (!gameState) {
+            const snap = loadSnapshot(userId);
+            if (snap) {
+                gameState = snap;
+                activeGames.set(userId, gameState);
+            }
+        }
 
         if (!gameState) {
             return interaction.reply({ 
-                embeds: [new EmbedBuilder().setColor(THEME.COLORS.ERROR).setDescription('❌ No active game found. Start a new game with `!blackjack <amount>`.')], 
+                embeds: [new EmbedBuilder().setColor(THEME.COLORS.ERROR).setDescription('❌ No active game found. Start a new game with `elora blackjack <amount>` or try `elora bj refresh`.')], 
                 ephemeral: true 
+            });
+        }
+
+        // Ignore stale button presses from older blackjack messages
+        if (gameState.messageId && interaction.message?.id && interaction.message.id !== gameState.messageId) {
+            return interaction.reply({
+                embeds: [new EmbedBuilder().setColor(THEME.COLORS.WARNING).setDescription('⚠️ This Blackjack panel is outdated. Use `elora bj refresh` to get the current game panel.')],
+                ephemeral: true
             });
         }
 
@@ -373,6 +433,7 @@ module.exports = {
             // Player hits - add a card
             gameState.playerHand.push(gameState.deck.pop());
             gameState.playerTotal = calculateHand(gameState.playerHand);
+            saveSnapshot(userId, gameState);
 
             // Check if player busts
             if (gameState.playerTotal > 21) {
@@ -388,6 +449,7 @@ module.exports = {
             // Update embed
             const embed = createGameEmbed(gameState, userId, interaction.user);
             const buttons = createButtons(gameState);
+            saveSnapshot(userId, gameState);
             
             return interaction.update({ embeds: [embed], components: [buttons] });
 
@@ -395,6 +457,7 @@ module.exports = {
             // Player stands - dealer plays
             await endGame(gameState, userId, gameState.guildId, interaction.user);
             activeGames.delete(userId);
+            saveSnapshot(userId, gameState);
             
             const embed = createGameEmbed(gameState, userId, interaction.user);
             const buttons = createButtons(gameState);
