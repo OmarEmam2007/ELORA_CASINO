@@ -10,7 +10,14 @@ module.exports = {
             if (!message || !client) return;
             if (message.author?.bot) return;
 
-            const { handlePrefixCommand } = require('../../handlers/prefixCommandHandler');
+            const { handlePrefixCommand, loadPrefixCommands } = require('../../handlers/prefixCommandHandler');
+
+            if (!client.prefixCommands || client.prefixCommands.size === 0) {
+                await loadPrefixCommands(client);
+                if (process.env.PREFIX_DEBUG === '1') {
+                    console.log(`✅ [PREFIX] Loaded prefix commands: ${client.prefixCommands?.size || 0}`);
+                }
+            }
             await handlePrefixCommand(message, client);
         } catch (e) {
             console.error('❌ [ELORA CASINO] messageCreate handler error:', e);
