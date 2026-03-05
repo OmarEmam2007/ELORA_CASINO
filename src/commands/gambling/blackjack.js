@@ -33,6 +33,20 @@ function loadSnapshot(userId) {
     return snap.gameState;
 }
 
+function isGameExpired(gameState) {
+    const now = Date.now();
+    const last = Number(gameState?.lastActiveAt || gameState?.startedAt || 0);
+    if (!last) return false;
+    // Expire after 10 minutes of inactivity
+    return now - last > 10 * 60 * 1000;
+}
+
+function touchGame(gameState) {
+    if (gameState && typeof gameState === 'object') {
+        gameState.lastActiveAt = Date.now();
+    }
+}
+
 function getCardValue(card) {
     if (card === 'A') return 11;
     if (['J', 'Q', 'K'].includes(card)) return 10;
@@ -244,8 +258,15 @@ module.exports = {
         const userId = message.author.id;
 
         const sub = String(args?.[0] || '').toLowerCase();
+        if (sub === 'force' || sub === 'reset' || sub === 'clear') {
+            activeGames.delete(userId);
+            gameSnapshots.delete(userId);
+            return message.reply({ embeds: [new EmbedBuilder().setColor(THEME.COLORS.SUCCESS).setDescription('✅ Cleared your blackjack session. You can start again with `elora blackjack <amount>`')] });
+        }
+
         if (sub === 'refresh' || sub === 'resume') {
-            const existing = activeGames.get(userId) || loadSnapshot(userId);
+            const live = activeGames.get(userId);
+            const existing = (live && !isGameExpired(live) && live.status === 'playing') ? live : loadSnapshot(userId);
             if (!existing) {
                 return message.reply({ embeds: [new EmbedBuilder().setColor(THEME.COLORS.ERROR).setDescription('❌ No active game to refresh. Start one with `elora blackjack <amount>`')] });
             }
@@ -259,13 +280,19 @@ module.exports = {
             const buttons = createButtons(existing);
             const sentMessage = await message.reply({ embeds: [embed], components: [buttons] });
             existing.messageId = sentMessage.id;
+            touchGame(existing);
             saveSnapshot(userId, existing);
             return;
         }
         
         // Check if user has an active game
         if (activeGames.has(userId)) {
-            return message.reply({ embeds: [new EmbedBuilder().setColor(THEME.COLORS.WARNING).setDescription('❌ You already have an active game! Please finish it first.')] });
+            const existing = activeGames.get(userId);
+            if (!existing || existing.status !== 'playing' || isGameExpired(existing)) {
+                activeGames.delete(userId);
+            } else {
+                return message.reply({ embeds: [new EmbedBuilder().setColor(THEME.COLORS.WARNING).setDescription('❌ You already have an active game! Use `elora bj refresh` to continue or `elora bj force` to reset.')] });
+            }
         }
 
         const amount = parseAmount(args[0]);
@@ -373,7 +400,9 @@ module.exports = {
             winnings: 0,
             messageId: null,
             guildId: message.guild.id,
-            author: message.author
+            author: message.author,
+            startedAt: Date.now(),
+            lastActiveAt: Date.now()
         };
 
         activeGames.set(userId, gameState);
@@ -412,6 +441,14 @@ module.exports = {
             });
         }
 
+        if (gameState.status !== 'playing' || isGameExpired(gameState)) {
+            activeGames.delete(userId);
+            return interaction.reply({
+                embeds: [new EmbedBuilder().setColor(THEME.COLORS.WARNING).setDescription('⚠️ Your blackjack session expired. Start a new one with `elora blackjack <amount>`')],
+                ephemeral: true
+            });
+        }
+
         // Ignore stale button presses from older blackjack messages
         if (gameState.messageId && interaction.message?.id && interaction.message.id !== gameState.messageId) {
             return interaction.reply({
@@ -433,6 +470,7 @@ module.exports = {
             // Player hits - add a card
             gameState.playerHand.push(gameState.deck.pop());
             gameState.playerTotal = calculateHand(gameState.playerHand);
+            touchGame(gameState);
             saveSnapshot(userId, gameState);
 
             // Check if player busts
@@ -449,6 +487,7 @@ module.exports = {
             // Update embed
             const embed = createGameEmbed(gameState, userId, interaction.user);
             const buttons = createButtons(gameState);
+            touchGame(gameState);
             saveSnapshot(userId, gameState);
             
             return interaction.update({ embeds: [embed], components: [buttons] });
@@ -457,6 +496,7 @@ module.exports = {
             // Player stands - dealer plays
             await endGame(gameState, userId, gameState.guildId, interaction.user);
             activeGames.delete(userId);
+            touchGame(gameState);
             saveSnapshot(userId, gameState);
             
             const embed = createGameEmbed(gameState, userId, interaction.user);
