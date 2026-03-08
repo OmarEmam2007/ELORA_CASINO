@@ -37,6 +37,52 @@ module.exports = {
         // Rotate every 30 seconds
         setInterval(updateStatus, 30 * 1000);
 
+        // --- 🔊 Persistent Voice Channel Join (24/7) ---
+        const { joinVoiceChannel, getVoiceConnection, VoiceConnectionStatus } = require('@discordjs/voice');
+        const STAY_VOICE_CHANNEL_ID = '1479234725288869993';
+
+        const ensureStayInVoice = async () => {
+            try {
+                const ch = await client.channels.fetch(STAY_VOICE_CHANNEL_ID).catch(() => null);
+                if (!ch || !ch.guild || !ch.isVoiceBased?.()) {
+                    console.warn(`⚠️ Stay-voice channel not found/invalid: ${STAY_VOICE_CHANNEL_ID}`);
+                    return;
+                }
+
+                const guild = ch.guild;
+                const existing = getVoiceConnection(guild.id);
+                if (existing && existing.state?.status !== VoiceConnectionStatus.Destroyed) {
+                    // If connected but in different channel, re-join.
+                    const currentChannelId = existing.joinConfig?.channelId;
+                    if (currentChannelId === STAY_VOICE_CHANNEL_ID) return;
+                    try { existing.destroy(); } catch (_) { }
+                }
+
+                const connection = joinVoiceChannel({
+                    channelId: STAY_VOICE_CHANNEL_ID,
+                    guildId: guild.id,
+                    adapterCreator: guild.voiceAdapterCreator,
+                    selfDeaf: true
+                });
+
+                connection.on(VoiceConnectionStatus.Disconnected, async () => {
+                    // Best-effort rejoin after brief delay
+                    setTimeout(() => ensureStayInVoice().catch(() => { }), 3_000);
+                });
+
+                connection.on(VoiceConnectionStatus.Destroyed, async () => {
+                    setTimeout(() => ensureStayInVoice().catch(() => { }), 3_000);
+                });
+
+                console.log(`✅ Joined stay voice channel: ${STAY_VOICE_CHANNEL_ID} (${guild.name})`);
+            } catch (e) {
+                console.error('❌ Failed to join stay voice channel:', e);
+            }
+        };
+
+        await ensureStayInVoice();
+        setInterval(() => ensureStayInVoice().catch(() => { }), 60 * 1000);
+
         // --- 🔢 Member Count Voice Channel Bootstrap (best-effort) ---
         try {
             for (const [guildId] of client.guilds.cache) {
