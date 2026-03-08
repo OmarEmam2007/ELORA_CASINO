@@ -38,8 +38,46 @@ module.exports = {
         setInterval(updateStatus, 30 * 1000);
 
         // --- 🔊 Persistent Voice Channel Join (24/7) ---
-        const { joinVoiceChannel, getVoiceConnection, VoiceConnectionStatus } = require('@discordjs/voice');
+        const { joinVoiceChannel, getVoiceConnection, VoiceConnectionStatus, entersState } = require('@discordjs/voice');
         const STAY_VOICE_CHANNEL_ID = '1479234725288869993';
+        const STAY_GROUP = 'elora_stay';
+        let stayConnection = null;
+        let stayListenersAttached = false;
+
+        const attachStayConnectionListeners = (connection) => {
+            if (!connection || stayListenersAttached) return;
+            stayListenersAttached = true;
+
+            connection.on('stateChange', (oldState, newState) => {
+                try {
+                    if (process.env.EVENT_DEBUG === '1') {
+                        console.log(`[STAY-VOICE] state ${oldState?.status} -> ${newState?.status}`);
+                    }
+                } catch (_) { }
+            });
+
+            connection.on(VoiceConnectionStatus.Disconnected, async () => {
+                try {
+                    // Discord voice can transiently disconnect. Try to reconnect first.
+                    await Promise.race([
+                        entersState(connection, VoiceConnectionStatus.Signalling, 5_000),
+                        entersState(connection, VoiceConnectionStatus.Connecting, 5_000),
+                        entersState(connection, VoiceConnectionStatus.Ready, 5_000),
+                    ]);
+                } catch (_) {
+                    try { connection.destroy(); } catch (_) { }
+                    stayConnection = null;
+                    stayListenersAttached = false;
+                    setTimeout(() => ensureStayInVoice().catch(() => { }), 3_000);
+                }
+            });
+
+            connection.on(VoiceConnectionStatus.Destroyed, async () => {
+                stayConnection = null;
+                stayListenersAttached = false;
+                setTimeout(() => ensureStayInVoice().catch(() => { }), 3_000);
+            });
+        };
 
         const ensureStayInVoice = async () => {
             try {
@@ -50,30 +88,37 @@ module.exports = {
                 }
 
                 const guild = ch.guild;
-                const existing = getVoiceConnection(guild.id);
+                const botMember = guild.members.me;
+                const actualChannelId = botMember?.voice?.channelId || null;
+                if (actualChannelId === STAY_VOICE_CHANNEL_ID) {
+                    // Ensure we also have a connection object.
+                    const existing = getVoiceConnection(guild.id, STAY_GROUP) || getVoiceConnection(guild.id);
+                    if (existing && existing.state?.status !== VoiceConnectionStatus.Destroyed) {
+                        stayConnection = existing;
+                        attachStayConnectionListeners(existing);
+                    }
+                    return;
+                }
+
+                const existing = getVoiceConnection(guild.id, STAY_GROUP) || getVoiceConnection(guild.id);
                 if (existing && existing.state?.status !== VoiceConnectionStatus.Destroyed) {
-                    // If connected but in different channel, re-join.
-                    const currentChannelId = existing.joinConfig?.channelId;
-                    if (currentChannelId === STAY_VOICE_CHANNEL_ID) return;
                     try { existing.destroy(); } catch (_) { }
+                    stayConnection = null;
+                    stayListenersAttached = false;
                 }
 
                 const connection = joinVoiceChannel({
                     channelId: STAY_VOICE_CHANNEL_ID,
                     guildId: guild.id,
                     adapterCreator: guild.voiceAdapterCreator,
-                    selfDeaf: true
+                    selfDeaf: true,
+                    group: STAY_GROUP
                 });
+                stayConnection = connection;
+                stayListenersAttached = false;
+                attachStayConnectionListeners(connection);
 
-                connection.on(VoiceConnectionStatus.Disconnected, async () => {
-                    // Best-effort rejoin after brief delay
-                    setTimeout(() => ensureStayInVoice().catch(() => { }), 3_000);
-                });
-
-                connection.on(VoiceConnectionStatus.Destroyed, async () => {
-                    setTimeout(() => ensureStayInVoice().catch(() => { }), 3_000);
-                });
-
+                await entersState(connection, VoiceConnectionStatus.Ready, 30_000).catch(() => { });
                 console.log(`✅ Joined stay voice channel: ${STAY_VOICE_CHANNEL_ID} (${guild.name})`);
             } catch (e) {
                 console.error('❌ Failed to join stay voice channel:', e);
@@ -81,7 +126,7 @@ module.exports = {
         };
 
         await ensureStayInVoice();
-        setInterval(() => ensureStayInVoice().catch(() => { }), 60 * 1000);
+        setInterval(() => ensureStayInVoice().catch(() => { }), 15 * 1000);
 
         // --- 🔢 Member Count Voice Channel Bootstrap (best-effort) ---
         try {
